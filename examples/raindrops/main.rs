@@ -9,7 +9,7 @@ fn main() {
 
     app.add_plugins(examples_common::SaneDefaultsPlugin)
         .add_plugins(examples_common::ShapesExamplePlugin::without_3d_camera())
-        .add_plugins(BevyVfxBagPlugin::default())
+        .add_plugins(BevyVfxBagPlugin)
         .add_systems(Startup, setup)
         .add_systems(Update, examples_common::print_on_change::<Raindrops>)
         .add_systems(Update, change)
