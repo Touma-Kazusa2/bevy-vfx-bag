@@ -34,9 +34,7 @@ fn setup(
         Transform::from_translation(Vec3::new(0.0, 0.0, 5.0)).looking_at(Vec3::default(), Vec3::Y),
         // Add the setting to the camera.
         // This component is also used to determine on which camera to run the post processing effect.
-        TestPostProcessSettings {
-            intensity: 0.0,
-        },
+        TestPostProcessSettings { intensity: 0.0 },
     ));
 
     // cube
