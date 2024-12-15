@@ -68,7 +68,7 @@ pub(crate) struct ShouldAdd3dCameraBundle(bool);
 impl Plugin for ShapesExamplePlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(ShouldAdd3dCameraBundle(self.add_3d_camera_bundle))
-            .add_plugins(FrameTimeDiagnosticsPlugin::default())
+            .add_plugins(FrameTimeDiagnosticsPlugin)
             .add_systems(Startup, shapes::setup)
             .add_systems(Startup, ui::setup)
             .add_systems(Update, shapes::rotate)

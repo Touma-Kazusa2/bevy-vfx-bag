@@ -35,8 +35,7 @@ fn setup(
         // Add the setting to the camera.
         // This component is also used to determine on which camera to run the post processing effect.
         TestPostProcessSettings {
-            intensity: 0.02,
-            ..default()
+            intensity: 0.0,
         },
     ));
 
