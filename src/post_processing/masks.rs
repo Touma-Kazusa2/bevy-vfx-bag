@@ -1,158 +1,16 @@
 use bevy::{
-    asset::load_internal_asset,
-    ecs::query::QueryItem,
     prelude::*,
-    reflect::TypeUuid,
     render::{
-        extract_component::{
-            ComponentUniforms, ExtractComponent, ExtractComponentPlugin, UniformComponentPlugin,
-        },
-        render_phase::{AddRenderCommand, DrawFunctions, RenderPhase},
-        render_resource::{
-            BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutEntry,
-            BindingType, BufferBindingType, PipelineCache, RenderPipelineDescriptor, ShaderDefVal,
-            ShaderStages, ShaderType, SpecializedRenderPipeline, SpecializedRenderPipelines,
-        },
+        extract_component::ExtractComponent, render_graph::RenderLabel, render_resource::*,
         renderer::RenderDevice,
-        RenderSet,
     },
 };
-use std::fmt::Display;
+use binding_types::uniform_buffer;
 
-use crate::post_processing::DrawPostProcessingEffect;
-
-use super::{Order, PostProcessingPhaseItem, UniformBindGroup};
-pub(crate) const MASK_SHADER_HANDLE: HandleUntyped =
-    HandleUntyped::weak_from_u64(Shader::TYPE_UUID, 1059400090272595510);
-
-#[derive(Resource)]
-pub(crate) struct MaskData {
-    pub uniform_layout: BindGroupLayout,
-    pub shared_layout: BindGroupLayout,
-}
-
-impl FromWorld for MaskData {
-    fn from_world(world: &mut World) -> Self {
-        let uniform_layout = super::create_layout(
-            world,
-            "Mask",
-            &[BindGroupLayoutEntry {
-                binding: 0,
-                ty: BindingType::Buffer {
-                    ty: BufferBindingType::Uniform,
-                    has_dynamic_offset: true,
-                    min_binding_size: Some(MaskUniform::min_size()),
-                },
-                visibility: ShaderStages::FRAGMENT,
-                count: None,
-            }],
-        );
-
-        let shared_layout = world
-            .resource::<super::PostProcessingSharedLayout>()
-            .shared_layout
-            .clone();
-        MaskData {
-            uniform_layout,
-            shared_layout,
-        }
-    }
-}
-
-pub(crate) struct Plugin;
-impl bevy::prelude::Plugin for Plugin {
-    fn build(&self, app: &mut App) {
-        load_internal_asset!(
-            app,
-            MASK_SHADER_HANDLE,
-            concat!(env!("CARGO_MANIFEST_DIR"), "/assets/shaders/", "masks.wgsl"),
-            Shader::from_wgsl
-        );
-
-        // This puts the uniform into the render world.
-        app.add_plugin(ExtractComponentPlugin::<Mask>::default())
-            .add_plugin(UniformComponentPlugin::<MaskUniform>::default());
-
-        super::render_app(app)
-            .add_system(
-                super::extract_post_processing_camera_phases::<Mask>.in_schedule(ExtractSchedule),
-            )
-            .init_resource::<MaskData>()
-            .init_resource::<UniformBindGroup<MaskUniform>>()
-            .init_resource::<SpecializedRenderPipelines<MaskData>>()
-            .add_system(prepare.in_set(RenderSet::Prepare))
-            .add_system(queue.in_set(RenderSet::Queue))
-            .add_render_command::<PostProcessingPhaseItem, DrawPostProcessingEffect<MaskUniform>>();
-    }
-}
-
-impl SpecializedRenderPipeline for MaskData {
-    type Key = MaskVariant;
-
-    fn specialize(&self, key: Self::Key) -> RenderPipelineDescriptor {
-        super::render_pipeline_descriptor(
-            "Masks",
-            &self.shared_layout,
-            &self.uniform_layout,
-            MASK_SHADER_HANDLE.typed(),
-            vec![key.into()],
-        )
-    }
-}
-
-fn prepare(
-    data: Res<MaskData>,
-    pipeline_cache: Res<PipelineCache>,
-    mut pipelines: ResMut<SpecializedRenderPipelines<MaskData>>,
-    mut views: Query<(
-        Entity,
-        &mut RenderPhase<PostProcessingPhaseItem>,
-        &Order<Mask>,
-        &MaskVariant,
-    )>,
-    draw_functions: Res<DrawFunctions<PostProcessingPhaseItem>>,
-) {
-    for (entity, mut phase, order, key) in views.iter_mut() {
-        let draw_function = draw_functions
-            .read()
-            .id::<DrawPostProcessingEffect<MaskUniform>>();
-
-        let pipeline_id = pipelines.specialize(&pipeline_cache, &data, *key);
-
-        phase.add(PostProcessingPhaseItem {
-            entity,
-            sort_key: (*order).into(),
-            draw_function,
-            pipeline_id,
-        });
-    }
-}
-
-fn queue(
-    render_device: Res<RenderDevice>,
-    data: Res<MaskData>,
-    mut bind_group: ResMut<UniformBindGroup<MaskUniform>>,
-    uniforms: Res<ComponentUniforms<MaskUniform>>,
-    views: Query<Entity, With<MaskUniform>>,
-) {
-    bind_group.inner = None;
-
-    if let Some(uniforms) = uniforms.binding() {
-        if !views.is_empty() {
-            bind_group.inner = Some(render_device.create_bind_group(&BindGroupDescriptor {
-                label: Some("Mask Uniform Bind Group"),
-                layout: &data.uniform_layout,
-                entries: &[BindGroupEntry {
-                    binding: 0,
-                    resource: uniforms.clone(),
-                }],
-            }));
-        }
-    }
-}
+use super::simple_post_process::{SimplePostProcess, TextureInputs};
 
 /// This controls the parameters of the effect.
-#[derive(Debug, Eq, PartialEq, Hash, Copy, Clone, Component)]
+#[derive(Debug, Eq, PartialEq, Hash, Copy, Clone)]
 pub enum MaskVariant {
     /// Rounded square type mask.
     ///
@@ -200,8 +58,24 @@ impl From<MaskVariant> for ShaderDefVal {
     }
 }
 
+impl From<&ShaderDefVal> for MaskVariant {
+    fn from(value: &ShaderDefVal) -> Self {
+        match value {
+            ShaderDefVal::Bool(key, _) => match key.as_str() {
+                "SQUARE" => MaskVariant::Square,
+                "CRT" => MaskVariant::Crt,
+                "VIGNETTE" => MaskVariant::Vignette,
+                _ => panic!("Unknown ShaderDefVal key: {}", key),
+            },
+            ShaderDefVal::Int(key, _) | ShaderDefVal::UInt(key, _) => {
+                panic!("ShaderDefVal type not supported for MaskVariant: {}", key)
+            }
+        }
+    }
+}
+
 /// A darkening mask on the outer edges of the image.
-#[derive(Debug, Copy, Clone, Component)]
+#[derive(Component, Clone, Copy, ExtractComponent, ShaderType)]
 pub struct Mask {
     /// The strength parameter of the mask in use.
     ///
@@ -213,18 +87,14 @@ pub struct Mask {
 
     /// How much the mask is faded: 1.0 - mask has no effect, 0.0 - mask is in full effect
     pub fade: f32,
-
-    /// Which [`MaskVariant`] to produce.
-    pub variant: MaskVariant,
+    // Which [`MaskVariant`] to produce.
+    //pub variant: MaskVariant,
 }
 
+use std::fmt::Display;
 impl Display for Mask {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "Mask {:?}, strength: {} fade: {}",
-            self.variant, self.strength, self.fade
-        )
+        write!(f, " strength: {} fade: {}", self.strength, self.fade)
     }
 }
 
@@ -234,7 +104,7 @@ impl Mask {
         Self {
             strength: 20.,
             fade: 0.,
-            variant: MaskVariant::Square,
+            //variant: MaskVariant::Square,
         }
     }
 
@@ -243,7 +113,7 @@ impl Mask {
         Self {
             strength: 80000.,
             fade: 0.,
-            variant: MaskVariant::Crt,
+            //variant: MaskVariant::Crt,
         }
     }
 
@@ -252,7 +122,7 @@ impl Mask {
         Self {
             strength: 0.66,
             fade: 0.,
-            variant: MaskVariant::Vignette,
+            //variant: MaskVariant::Vignette,
         }
     }
 }
@@ -263,33 +133,37 @@ impl Default for Mask {
     }
 }
 
-#[doc(hidden)]
-/// [`Mask`] as a uniform.
-#[derive(Debug, ShaderType, Clone, Component, Copy)]
-pub struct MaskUniform {
-    pub(crate) strength: f32,
-    pub(crate) fade: f32,
-}
-
-impl From<Mask> for MaskUniform {
-    fn from(mask: Mask) -> Self {
-        Self {
-            strength: mask.strength,
-            fade: mask.fade,
-        }
+impl SimplePostProcess for Mask {
+    fn shader_path() -> String {
+        concat!(env!("CARGO_MANIFEST_DIR"), "/assets/shaders/", "masks.wgsl").into()
+    }
+    type Label = MaskPostProcessLabel;
+    fn layout(device: &RenderDevice) -> BindGroupLayout {
+        device.create_bind_group_layout(
+            "mask_bind_group_layout",
+            &BindGroupLayoutEntries::sequential(
+                ShaderStages::FRAGMENT,
+                (uniform_buffer::<Self>(true),),
+            ),
+        )
+    }
+    fn bind_group(
+        _world: &World,
+        device: &RenderDevice,
+        layout: &BindGroupLayout,
+        buffer: BindingResource,
+        _textures: &TextureInputs,
+    ) -> BindGroup {
+        device.create_bind_group(
+            "mask_bind_group",
+            layout,
+            &BindGroupEntries::sequential((buffer,)),
+        )
+    }
+    fn shader_defs() -> Vec<ShaderDefVal> {
+        vec!["VIGNETTE".into()]
     }
 }
-
-impl ExtractComponent for Mask {
-    type Query = (&'static Self, &'static Camera);
-    type Filter = ();
-    type Out = (MaskUniform, MaskVariant);
-
-    fn extract_component((settings, camera): QueryItem<'_, Self::Query>) -> Option<Self::Out> {
-        if !camera.is_active {
-            return None;
-        }
-
-        Some(((*settings).into(), settings.variant))
-    }
-}
+///TODO
+#[derive(Debug, Hash, PartialEq, Eq, Clone, RenderLabel, Default)]
+pub struct MaskPostProcessLabel;

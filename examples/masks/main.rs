@@ -3,55 +3,65 @@ mod examples_common;
 
 use bevy::prelude::*;
 use bevy_vfx_bag::{
-    post_processing::masks::{Mask, MaskVariant},
+    post_processing::{
+        masks::{Mask, MaskVariant},
+        simple_post_process::PostProcessShaderDef,
+    },
     BevyVfxBagPlugin,
 };
 
 fn main() {
     let mut app = App::new();
 
-    app.add_plugin(examples_common::SaneDefaultsPlugin)
-        .add_plugin(examples_common::ShapesExamplePlugin::without_3d_camera())
-        .add_plugin(BevyVfxBagPlugin::default())
-        .add_startup_system(startup)
-        .add_system(update)
-        .add_system(examples_common::print_on_change::<Mask>)
+    app.add_plugins(examples_common::SaneDefaultsPlugin)
+        .add_plugins(examples_common::ShapesExamplePlugin::without_3d_camera())
+        .add_plugins(BevyVfxBagPlugin)
+        .add_systems(Startup, setup)
+        .add_systems(Update, examples_common::print_on_change::<Mask>)
+        .add_systems(Update, change)
         .run();
 }
 
-fn startup(mut commands: Commands) {
-    info!("Press [1|2|3] to change which mask is in use, [Up|Down] to change strenght, [L|H] to go low/high [PgUp/PgDown] to fade in/out the mask");
+fn setup(mut commands: Commands) {
+    info!("Flips the screen orientation every interval.");
 
-    commands
-        .spawn(Camera3dBundle {
-            transform: Transform::from_xyz(0.0, 6., 12.0)
-                .looking_at(Vec3::new(0., 1., 0.), Vec3::Y),
-            ..default()
-        })
-        .insert(Mask::default());
+    commands.spawn((
+        Camera3d::default(),
+        Transform::from_xyz(0.0, 7., 14.0).looking_at(Vec3::new(0., 1., 0.), Vec3::Y),
+        Mask::default(),
+    ));
 }
 
-fn update(keyboard_input: Res<Input<KeyCode>>, mut query: Query<&mut Mask, With<Camera>>) {
+fn change(
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+    mut query: Query<&mut Mask, With<Camera>>,
+    mut shader_def: ResMut<PostProcessShaderDef<Mask>>,
+) {
     let mut mask = query.single_mut();
 
-    if keyboard_input.just_pressed(KeyCode::Key1) {
+    if keyboard_input.just_pressed(KeyCode::Digit1) {
         *mask = Mask::square();
-    } else if keyboard_input.just_pressed(KeyCode::Key2) {
+        shader_def.set_shader_defs(vec![MaskVariant::Square.into()]);
+    } else if keyboard_input.just_pressed(KeyCode::Digit2) {
         *mask = Mask::crt();
-    } else if keyboard_input.just_pressed(KeyCode::Key3) {
+        shader_def.set_shader_defs(vec![MaskVariant::Crt.into()]);
+    } else if keyboard_input.just_pressed(KeyCode::Digit3) {
         *mask = Mask::vignette();
-    };
+        shader_def.set_shader_defs(vec![MaskVariant::Vignette.into()]);
+    }
+
+    let shader_defined = shader_def.shader_defs().iter().next().unwrap().into();
 
     // Let user change strength in increments via up, down arrows
-    let increment = || match mask.variant {
+    let increment = || match shader_defined {
         MaskVariant::Square => 1.,
         MaskVariant::Crt => 1000.,
         MaskVariant::Vignette => 0.05,
     };
 
-    if keyboard_input.pressed(KeyCode::Up) {
+    if keyboard_input.pressed(KeyCode::ArrowUp) {
         mask.strength += increment();
-    } else if keyboard_input.pressed(KeyCode::Down) {
+    } else if keyboard_input.pressed(KeyCode::ArrowDown) {
         mask.strength -= increment();
     };
 
@@ -61,24 +71,24 @@ fn update(keyboard_input: Res<Input<KeyCode>>, mut query: Query<&mut Mask, With<
         mask.fade -= 0.01;
     };
 
-    mask.fade = mask.fade.clamp(0.0, 1.0);
+    //mask.fade = mask.fade.clamp(0.0, 1.0);
 
     // Let user go to low- and high strength values directly via L and H keys
-    let low = || match mask.variant {
+    let low = || match shader_defined {
         MaskVariant::Square => 3.,
         MaskVariant::Crt => 3000.,
         MaskVariant::Vignette => 0.1,
     };
 
-    let high = || match mask.variant {
+    let high = || match shader_defined {
         MaskVariant::Square => 100.,
         MaskVariant::Crt => 500000.,
         MaskVariant::Vignette => 1.5,
     };
 
-    if keyboard_input.just_pressed(KeyCode::L) {
+    if keyboard_input.just_pressed(KeyCode::KeyL) {
         mask.strength = low();
-    } else if keyboard_input.just_pressed(KeyCode::H) {
+    } else if keyboard_input.just_pressed(KeyCode::KeyH) {
         mask.strength = high();
     };
 }

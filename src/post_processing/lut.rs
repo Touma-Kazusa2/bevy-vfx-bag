@@ -1,329 +1,134 @@
 use bevy::{
-    asset::load_internal_asset,
-    ecs::{
-        query::{QueryItem, ROQueryItem},
-        system::{lifetimeless::Read, SystemParamItem},
-    },
+    asset::{Handle, RenderAssetUsages},
+    image::{CompressedImageFormats, Image, ImageSampler, ImageType},
     prelude::*,
-    reflect::TypeUuid,
-    render::{
-        extract_component::{ExtractComponent, ExtractComponentPlugin},
-        render_asset::RenderAssets,
-        render_phase::{
-            AddRenderCommand, DrawFunctions, PhaseItem, RenderCommand, RenderCommandResult,
-            RenderPhase, SetItemPipeline, TrackedRenderPass,
-        },
-        render_resource::{
-            BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutEntry,
-            BindingResource, BindingType, CachedRenderPipelineId, Extent3d, SamplerBindingType,
-            ShaderStages, TextureDimension, TextureFormat, TextureSampleType,
-            TextureViewDescriptor, TextureViewDimension,
-        },
-        renderer::RenderDevice,
-        texture::{CompressedImageFormats, ImageType},
-        RenderSet,
-    },
+    render::{extract_component::ExtractComponent, render_graph::RenderLabel, render_resource::*},
 };
 
-use super::{DrawPostProcessing, Order, PostProcessingPhaseItem, SetTextureSamplerGlobals};
+use super::post_process::{GetShaderDefs, PostProcess};
+///TODO
+#[derive(Debug, Hash, PartialEq, Eq, Clone, RenderLabel, Default)]
+pub struct LutPostProcessLabel;
 
-pub(crate) const LUT_SHADER_HANDLE: HandleUntyped =
-    HandleUntyped::weak_from_u64(Shader::TYPE_UUID, 3719875149378986812);
-
-const LUT_ARCTIC_IMAGE_HANDLE: HandleUntyped =
-    HandleUntyped::weak_from_u64(Image::TYPE_UUID, 11514769687270273032);
-const LUT_NEO_IMAGE_HANDLE: HandleUntyped =
-    HandleUntyped::weak_from_u64(Image::TYPE_UUID, 18411885151390434307);
-const LUT_SLATE_IMAGE_HANDLE: HandleUntyped =
-    HandleUntyped::weak_from_u64(Image::TYPE_UUID, 8809687374954616573);
-
-type DrawLut = (
-    // The pipeline must be set in order to use the correct bind group,
-    // access the correct shaders, and so on.
-    SetItemPipeline,
-    // Common to post processing items is that they all use the same
-    // first bind group, which has the input texture (the scene) and
-    // the sampler for that.
-    SetTextureSamplerGlobals<0>,
-    // Here we set the bind group for the effect.
-    SetLutImage<1>,
-    // Lastly we draw vertices.
-    // This is simple for a post processing effect, since we just draw
-    // a full screen triangle.
-    DrawPostProcessing,
-);
-
-#[derive(Debug, Component)]
-struct LutBindGroup {
-    bind_group: BindGroup,
+///TODO
+#[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
+pub struct LutPostProcessBindGroup {
+    ///TODO
+    #[texture(0, dimension = "3d")]
+    #[sampler(1)]
+    pub texture: Handle<Image>,
 }
 
-struct SetLutImage<const I: usize>;
-impl<P: PhaseItem, const I: usize> RenderCommand<P> for SetLutImage<I> {
-    type Param = ();
-    type ViewWorldQuery = ();
-    type ItemWorldQuery = Read<LutBindGroup>;
-
-    #[inline]
-    fn render<'w>(
-        _item: &P,
-        _view: (),
-        lut_bind_group: ROQueryItem<'w, Self::ItemWorldQuery>,
-        _param: SystemParamItem<'w, '_, Self::Param>,
-        pass: &mut TrackedRenderPass<'w>,
-    ) -> RenderCommandResult {
-        pass.set_bind_group(I, &lut_bind_group.bind_group, &[]);
-        RenderCommandResult::Success
+impl GetShaderDefs for LutPostProcessBindGroup {
+    fn shader_defs(&self) -> Vec<ShaderDefVal> {
+        vec![]
     }
 }
 
-#[derive(Resource)]
-pub(crate) struct LutData {
-    pub pipeline_id: CachedRenderPipelineId,
-    pub layout: BindGroupLayout,
-}
-
-impl FromWorld for LutData {
-    fn from_world(world: &mut World) -> Self {
-        let (layout, pipeline_id) = super::create_layout_and_pipeline(
-            world,
-            "LUT",
-            &[
-                BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: ShaderStages::FRAGMENT,
-                    ty: BindingType::Texture {
-                        sample_type: TextureSampleType::Float { filterable: true },
-                        view_dimension: TextureViewDimension::D3,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: ShaderStages::FRAGMENT,
-                    ty: BindingType::Sampler(SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-            LUT_SHADER_HANDLE.typed(),
-        );
-
-        LutData {
-            pipeline_id,
-            layout,
-        }
+impl PostProcess for Lut {
+    fn shader_path() -> String {
+        concat!(env!("CARGO_MANIFEST_DIR"), "/assets/shaders/", "lut.wgsl").into()
     }
-}
+    type Label = LutPostProcessLabel;
 
-pub(crate) struct Plugin;
-impl bevy::prelude::Plugin for Plugin {
-    fn build(&self, app: &mut App) {
-        load_internal_asset!(
-            app,
-            LUT_SHADER_HANDLE,
-            concat!(env!("CARGO_MANIFEST_DIR"), "/assets/shaders/", "lut.wgsl"),
-            Shader::from_wgsl
-        );
+    type BindGroup = LutPostProcessBindGroup;
 
-        let mut assets = app.world.resource_mut::<Assets<_>>();
-
-        let image = Image::from_buffer(
-            include_bytes!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/assets/luts/",
-                "neo.png"
-            )),
-            ImageType::Extension("png"),
-            CompressedImageFormats::NONE,
-            false,
-        )
-        .expect("Should load LUT successfully");
-        assets.set_untracked(LUT_NEO_IMAGE_HANDLE, image);
-
-        let image = Image::from_buffer(
-            include_bytes!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/assets/luts/",
-                "slate.png"
-            )),
-            ImageType::Extension("png"),
-            CompressedImageFormats::NONE,
-            false,
-        )
-        .expect("Should load LUT successfully");
-        assets.set_untracked(LUT_SLATE_IMAGE_HANDLE, image);
-
-        let image = Image::from_buffer(
-            include_bytes!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/assets/luts/",
-                "arctic.png"
-            )),
-            ImageType::Extension("png"),
-            CompressedImageFormats::NONE,
-            false,
-        )
-        .expect("Should load LUT successfully");
-        assets.set_untracked(LUT_ARCTIC_IMAGE_HANDLE, image);
-
-        // This puts the uniform into the render world.
-        app.add_plugin(ExtractComponentPlugin::<Lut>::default())
-            .add_system(adapt_image_for_lut_use.in_base_set(CoreSet::PostUpdate));
-
-        super::render_app(app)
-            .add_system(
-                super::extract_post_processing_camera_phases::<Lut>.in_schedule(ExtractSchedule),
-            )
-            .init_resource::<LutData>()
-            .add_system(prepare.in_set(RenderSet::Prepare))
-            .add_system(queue.in_set(RenderSet::Queue))
-            .add_render_command::<PostProcessingPhaseItem, DrawLut>();
+    fn handle(&self) -> Handle<Self::BindGroup> {
+        self.handle.clone()
     }
-}
 
-fn adapt_image_for_lut_use(
-    mut assets: ResMut<Assets<Image>>,
-    mut luts: Query<&mut Lut, Changed<Lut>>,
-) {
-    for mut lut in luts.iter_mut() {
-        if lut.prepared {
-            continue;
-        }
+    fn init(app: &mut App) {
+        let mut assets = app.world_mut().resource_mut::<Assets<_>>();
 
-        let image = assets
-            .get_mut(&lut.texture)
-            .expect("Handle should point to asset");
+        let image = adapt_image_for_lut_use(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/assets/luts/",
+            "neo.png"
+        )));
+        assets.insert(&LUT_NEO_IMAGE_HANDLE, image);
 
-        // The LUT is a 3d texture. It has 64 layers, each of which is a 64x64 image.
-        image.texture_descriptor.size = Extent3d {
-            width: 64,
-            height: 64,
-            depth_or_array_layers: 64,
-        };
-        image.texture_descriptor.dimension = TextureDimension::D3;
-        image.texture_descriptor.format = TextureFormat::Rgba8Unorm;
+        let image = adapt_image_for_lut_use(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/assets/luts/",
+            "slate.png"
+        )));
+        assets.insert(&LUT_SLATE_IMAGE_HANDLE, image);
 
-        image.texture_view_descriptor = Some(TextureViewDescriptor {
-            label: Some("LUT Texture View"),
-            format: Some(TextureFormat::Rgba8Unorm),
-            dimension: Some(TextureViewDimension::D3),
-            ..default()
-        });
-
-        debug!("LUT prepared for handle {:?}", lut.texture);
-        lut.prepared = true;
-    }
-}
-
-#[allow(clippy::type_complexity)]
-fn prepare(
-    data: Res<LutData>,
-    mut views: Query<
-        (
-            Entity,
-            &mut RenderPhase<PostProcessingPhaseItem>,
-            &Order<Lut>,
-        ),
-        With<Lut>,
-    >,
-    draw_functions: Res<DrawFunctions<PostProcessingPhaseItem>>,
-) {
-    for (entity, mut phase, order) in views.iter_mut() {
-        let draw_function = draw_functions.read().id::<DrawLut>();
-
-        phase.add(PostProcessingPhaseItem {
-            entity,
-            sort_key: order.clone().into(),
-            draw_function,
-            pipeline_id: data.pipeline_id,
-        });
-    }
-}
-
-fn queue(
-    mut commands: Commands,
-    render_device: Res<RenderDevice>,
-    data: Res<LutData>,
-    images: Res<RenderAssets<Image>>,
-    luts: Query<(Entity, &Lut)>,
-) {
-    for (entity, lut) in luts.iter() {
-        if let Some(lut_image) = images.get(&lut.texture) {
-            let bind_group = render_device.create_bind_group(&BindGroupDescriptor {
-                label: Some("LUT Uniform Bind Group"),
-                layout: &data.layout,
-                entries: &[
-                    BindGroupEntry {
-                        binding: 0,
-                        resource: BindingResource::TextureView(&lut_image.texture_view),
-                    },
-                    BindGroupEntry {
-                        binding: 1,
-                        resource: BindingResource::Sampler(&lut_image.sampler),
-                    },
-                ],
-            });
-
-            commands
-                .get_or_spawn(entity)
-                .insert(LutBindGroup { bind_group });
-        }
+        let image = adapt_image_for_lut_use(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/assets/luts/",
+            "arctic.png"
+        )));
+        assets.insert(&LUT_ARCTIC_IMAGE_HANDLE, image);
     }
 }
 
 /// A look-up texture. Maps colors to colors. Useful for colorschemes.
-#[derive(Debug, Component, Clone)]
+#[derive(Default, Debug, Component, Clone, ExtractComponent)]
 pub struct Lut {
     /// The 3D look-up texture
-    texture: Handle<Image>,
-
-    prepared: bool,
+    handle: Handle<LutPostProcessBindGroup>,
+    //prepared: bool,
 }
 
 impl Lut {
     /// Creates a new LUT component.
     /// The image should be a 64x64x64 3D texture.
     /// See the `make-neutral-lut` example.
-    pub fn new(texture: Handle<Image>) -> Self {
+    pub fn new(assets: &mut Assets<LutPostProcessBindGroup>, image_handle: Handle<Image>) -> Self {
+        let handle = assets.add(LutPostProcessBindGroup {
+            texture: image_handle,
+        });
         Self {
-            texture,
-            prepared: false,
+            handle,
+            //prepared: false,
         }
     }
 
     /// The arctic color scheme LUT.
-    pub fn arctic() -> Self {
-        Self::new(LUT_ARCTIC_IMAGE_HANDLE.typed_weak())
+    pub fn arctic(assets: &mut Assets<LutPostProcessBindGroup>) -> Self {
+        Self::new(assets, LUT_ARCTIC_IMAGE_HANDLE)
     }
 
     /// The neo color scheme LUT.
-    pub fn neo() -> Self {
-        Self::default()
+    pub fn neo(assets: &mut Assets<LutPostProcessBindGroup>) -> Self {
+        Self::new(assets, LUT_NEO_IMAGE_HANDLE)
     }
 
     /// The slate color scheme LUT.
-    pub fn slate() -> Self {
-        Self::new(LUT_SLATE_IMAGE_HANDLE.typed_weak())
+    pub fn slate(assets: &mut Assets<LutPostProcessBindGroup>) -> Self {
+        Self::new(assets, LUT_SLATE_IMAGE_HANDLE)
     }
 }
 
-impl Default for Lut {
-    fn default() -> Self {
-        Self::new(LUT_NEO_IMAGE_HANDLE.typed_weak())
-    }
-}
+const LUT_ARCTIC_IMAGE_HANDLE: Handle<Image> = Handle::weak_from_u128(11514769687270273032);
+const LUT_NEO_IMAGE_HANDLE: Handle<Image> = Handle::weak_from_u128(18411885151390434307);
+const LUT_SLATE_IMAGE_HANDLE: Handle<Image> = Handle::weak_from_u128(8809687374954616573);
 
-impl ExtractComponent for Lut {
-    type Query = (&'static Self, &'static Camera);
-    type Filter = ();
-    type Out = Self;
+fn adapt_image_for_lut_use(buffer: &[u8]) -> Image {
+    let sampler = ImageSampler::Default;
+    let mut image = Image::from_buffer(
+        buffer,
+        ImageType::Extension("png"),
+        CompressedImageFormats::NONE,
+        false,
+        sampler.clone(),
+        RenderAssetUsages::RENDER_WORLD,
+    )
+    .expect("Should load LUT successfully");
+    image.texture_descriptor.size = Extent3d {
+        width: 64,
+        height: 64,
+        depth_or_array_layers: 64,
+    };
+    image.texture_descriptor.dimension = TextureDimension::D3;
+    image.texture_descriptor.format = TextureFormat::Rgba8Unorm;
 
-    fn extract_component((lut, camera): QueryItem<'_, Self::Query>) -> Option<Self::Out> {
-        if !camera.is_active || !lut.prepared {
-            return None;
-        }
-
-        Some(lut.clone())
-    }
+    image.texture_view_descriptor = Some(TextureViewDescriptor {
+        label: Some("LUT Texture View"),
+        format: Some(TextureFormat::Rgba8Unorm),
+        dimension: Some(TextureViewDimension::D3),
+        ..default()
+    });
+    image
 }

@@ -1,136 +1,17 @@
 use bevy::{
-    asset::load_internal_asset,
-    ecs::query::QueryItem,
     prelude::*,
-    reflect::TypeUuid,
     render::{
-        extract_component::{
-            ComponentUniforms, ExtractComponent, ExtractComponentPlugin, UniformComponentPlugin,
-        },
-        render_phase::{AddRenderCommand, DrawFunctions, RenderPhase},
-        render_resource::{
-            BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutEntry,
-            BindingType, BufferBindingType, CachedRenderPipelineId, ShaderStages, ShaderType,
-        },
+        extract_component::ExtractComponent, render_graph::RenderLabel, render_resource::*,
         renderer::RenderDevice,
-        RenderSet,
     },
 };
+use binding_types::uniform_buffer;
+
 use std::fmt::Display;
 
-use crate::post_processing::{DrawPostProcessingEffect, UniformBindGroup};
-
-use super::{Order, PostProcessingPhaseItem};
-
-pub(crate) const FLIP_SHADER_HANDLE: HandleUntyped =
-    HandleUntyped::weak_from_u64(Shader::TYPE_UUID, 1649866799156783187);
-
-#[derive(Resource)]
-pub(crate) struct FlipData {
-    pub pipeline_id: CachedRenderPipelineId,
-    pub uniform_layout: BindGroupLayout,
-}
-
-impl FromWorld for FlipData {
-    fn from_world(world: &mut World) -> Self {
-        let (uniform_layout, pipeline_id) = super::create_layout_and_pipeline(
-            world,
-            "Flip",
-            &[BindGroupLayoutEntry {
-                binding: 0,
-                ty: BindingType::Buffer {
-                    ty: BufferBindingType::Uniform,
-                    has_dynamic_offset: true,
-                    min_binding_size: Some(FlipUniform::min_size()),
-                },
-                visibility: ShaderStages::FRAGMENT,
-                count: None,
-            }],
-            FLIP_SHADER_HANDLE.typed(),
-        );
-
-        FlipData {
-            pipeline_id,
-            uniform_layout,
-        }
-    }
-}
-
-pub(crate) struct Plugin;
-impl bevy::prelude::Plugin for Plugin {
-    fn build(&self, app: &mut App) {
-        load_internal_asset!(
-            app,
-            FLIP_SHADER_HANDLE,
-            concat!(env!("CARGO_MANIFEST_DIR"), "/assets/shaders/", "flip.wgsl"),
-            Shader::from_wgsl
-        );
-
-        // This puts the uniform into the render world.
-        app.add_plugin(ExtractComponentPlugin::<Flip>::default())
-            .add_plugin(UniformComponentPlugin::<FlipUniform>::default());
-
-        super::render_app(app)
-            .add_system(
-                super::extract_post_processing_camera_phases::<Flip>.in_schedule(ExtractSchedule),
-            )
-            .init_resource::<FlipData>()
-            .init_resource::<UniformBindGroup<FlipUniform>>()
-            .add_system(prepare.in_set(RenderSet::Prepare))
-            .add_system(queue.in_set(RenderSet::Queue))
-            .add_render_command::<PostProcessingPhaseItem, DrawPostProcessingEffect<FlipUniform>>();
-    }
-}
-
-fn prepare(
-    data: Res<FlipData>,
-    mut views: Query<(
-        Entity,
-        &mut RenderPhase<PostProcessingPhaseItem>,
-        &Order<Flip>,
-    )>,
-    draw_functions: Res<DrawFunctions<PostProcessingPhaseItem>>,
-) {
-    for (entity, mut phase, order) in views.iter_mut() {
-        let draw_function = draw_functions
-            .read()
-            .id::<DrawPostProcessingEffect<FlipUniform>>();
-
-        phase.add(PostProcessingPhaseItem {
-            entity,
-            sort_key: (*order).into(),
-            draw_function,
-            pipeline_id: data.pipeline_id,
-        });
-    }
-}
-
-fn queue(
-    render_device: Res<RenderDevice>,
-    data: Res<FlipData>,
-    mut bind_group: ResMut<UniformBindGroup<FlipUniform>>,
-    uniforms: Res<ComponentUniforms<FlipUniform>>,
-    views: Query<Entity, With<FlipUniform>>,
-) {
-    bind_group.inner = None;
-
-    if let Some(uniforms) = uniforms.binding() {
-        if !views.is_empty() {
-            bind_group.inner = Some(render_device.create_bind_group(&BindGroupDescriptor {
-                label: Some("Flip Uniform Bind Group"),
-                layout: &data.uniform_layout,
-                entries: &[BindGroupEntry {
-                    binding: 0,
-                    resource: uniforms.clone(),
-                }],
-            }));
-        }
-    }
-}
-
-#[doc(hidden)]
-/// The uniform representation of [`Flip`].
-#[derive(Debug, ShaderType, Clone, Component)]
+use super::simple_post_process::{SimplePostProcess, TextureInputs};
+///TODO
+#[derive(Component, Default, Clone, Copy, ExtractComponent, ShaderType)]
 pub struct FlipUniform {
     pub(crate) x: f32,
     pub(crate) y: f32,
@@ -172,16 +53,35 @@ impl Display for Flip {
     }
 }
 
-impl ExtractComponent for Flip {
-    type Query = (&'static Self, &'static Camera);
-    type Filter = ();
-    type Out = FlipUniform;
-
-    fn extract_component((settings, camera): QueryItem<'_, Self::Query>) -> Option<Self::Out> {
-        if !camera.is_active {
-            return None;
-        }
-
-        Some((*settings).into())
+impl SimplePostProcess for FlipUniform {
+    fn shader_path() -> String {
+        concat!(env!("CARGO_MANIFEST_DIR"), "/assets/shaders/", "flip.wgsl").into()
+    }
+    type Label = FlipPostProcessLabel;
+    fn layout(device: &RenderDevice) -> BindGroupLayout {
+        device.create_bind_group_layout(
+            "flip_bind_group_layout",
+            &BindGroupLayoutEntries::sequential(
+                ShaderStages::FRAGMENT,
+                (uniform_buffer::<FlipUniform>(true),),
+            ),
+        )
+    }
+    fn bind_group(
+        _world: &World,
+        device: &RenderDevice,
+        layout: &BindGroupLayout,
+        buffer: BindingResource,
+        _textures: &TextureInputs,
+    ) -> BindGroup {
+        device.create_bind_group(
+            "flip_bind_group",
+            layout,
+            &BindGroupEntries::sequential((buffer,)),
+        )
     }
 }
+
+///TODO
+#[derive(Debug, Hash, PartialEq, Eq, Clone, RenderLabel, Default)]
+pub struct FlipPostProcessLabel;
