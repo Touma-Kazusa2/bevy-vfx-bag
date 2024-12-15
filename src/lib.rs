@@ -10,5 +10,5 @@ mod plugin;
 
 pub use plugin::BevyVfxBagPlugin;
 
-/// Utilities.
-pub(crate) mod util;
+// Utilities.
+//pub(crate) mod util;
