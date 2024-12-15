@@ -85,7 +85,7 @@ impl SimplePostProcess for Raindrops {
         let gpu_image = world
             .resource::<RenderAssets<GpuImage>>()
             .get(texture)
-            .unwrap();
+            .unwrap_or_else(|| panic!("Expected a GpuImage for raindrops post processing"));
         device.create_bind_group(
             "flip_bind_group",
             layout,
@@ -118,7 +118,7 @@ impl SimplePostProcess for Raindrops {
 
         let handle = world
             .get_resource_mut::<Assets<Image>>()
-            .unwrap()
+            .unwrap_or_else(|| panic!("Expected an Assets<Image> resource"))
             .add(image);
 
         TextureInputs::Single(handle)

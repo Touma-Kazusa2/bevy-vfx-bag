@@ -163,7 +163,13 @@ impl<T: PostProcess> ViewNode for PostProcessNode<T> {
         world: &World,
     ) -> Result<(), NodeRunError> {
         let bind_group = world.resource::<RenderAssets<PreparedPostProcessBindGroup<T>>>();
-        let prepared_post_process_bind_group = bind_group.get(&component.handle()).unwrap();
+        let prepared_post_process_bind_group =
+            bind_group.get(&component.handle()).unwrap_or_else(|| {
+                panic!(
+                    "Failed to get prepared post process bind group for handle: {:?}",
+                    component.handle()
+                )
+            });
         let pipeline_cache = world.resource::<PipelineCache>();
 
         // Get the pipeline from the cache

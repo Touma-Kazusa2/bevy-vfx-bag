@@ -37,7 +37,7 @@ impl PostProcess for Lut {
         self.handle.clone()
     }
 
-    fn init(app: &mut App) -> () {
+    fn init(app: &mut App) {
         let mut assets = app.world_mut().resource_mut::<Assets<_>>();
 
         let image = adapt_image_for_lut_use(include_bytes!(concat!(
@@ -64,7 +64,7 @@ impl PostProcess for Lut {
 }
 
 /// A look-up texture. Maps colors to colors. Useful for colorschemes.
-#[derive(Debug, Component, Clone, ExtractComponent)]
+#[derive(Default, Debug, Component, Clone, ExtractComponent)]
 pub struct Lut {
     /// The 3D look-up texture
     handle: Handle<LutPostProcessBindGroup>,
@@ -101,13 +101,6 @@ impl Lut {
     }
 }
 
-impl Default for Lut {
-    fn default() -> Self {
-        Self {
-            handle: Handle::default(),
-        }
-    }
-}
 const LUT_ARCTIC_IMAGE_HANDLE: Handle<Image> = Handle::weak_from_u128(11514769687270273032);
 const LUT_NEO_IMAGE_HANDLE: Handle<Image> = Handle::weak_from_u128(18411885151390434307);
 const LUT_SLATE_IMAGE_HANDLE: Handle<Image> = Handle::weak_from_u128(8809687374954616573);
