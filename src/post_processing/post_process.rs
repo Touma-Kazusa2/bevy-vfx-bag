@@ -33,7 +33,10 @@ use bevy::{
 ///TODO
 pub trait PostProcess: Component + Clone + ExtractComponent + Default // + WriteInto + ShaderType
 {
-    ///TODO
+    ///TODO作为asset的AsbindGroup可以直接修改其uniform,但是这似乎并不代表:
+    /// 当只修改uniform时,bevy会只更新buffer
+    /// 而是可能重新创建bindgroup,这对于每tick都会修改uniform的后处理来说可能有性能上的影响
+    /// 当然我还没有进行实验,这个实验会很简单,因为我已经在创建bindgroup的代码那加了个info!()
     type BindGroup: AsBindGroup + Asset + Clone + GetShaderDefs;
     ///TODO
     type Label: RenderLabel + Default;
